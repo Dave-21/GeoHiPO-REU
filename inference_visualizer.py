@@ -10,8 +10,7 @@ from shapely.geometry import LineString, Point
 from collections import Counter
 from sklearn.cluster import KMeans
 from math import radians, cos, sin, asin, sqrt
-from geopy.geocoders import Nominatim
-from geopy.extra.rate_limiter import RateLimiter
+from geocoder import Geocoder
 
 # ------------------------
 # Parameters
@@ -41,8 +40,7 @@ gt_df = pd.read_csv(GROUND_TRUTH_FILE, usecols=["IMG_ID", "LAT", "LON"])
 
 df = pred_df.merge(gt_df, left_on="filename", right_on="IMG_ID", how="left")
 
-geolocator = Nominatim(user_agent="geo_visualizer")
-geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
+geocoder = Geocoder()
 
 records = []
 
@@ -52,22 +50,8 @@ def haversine(lon1, lat1, lon2, lat2):
     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
     return 6371 * 2 * asin(sqrt(a))
 
-cache = {}
-
 def geocode_place(place):
-    if not isinstance(place, str) or not place.strip():
-        return None, None
-    if place in cache:
-        return cache[place]
-    try:
-        loc = geocode(place)
-        if loc:
-            cache[place] = (loc.latitude, loc.longitude)
-            return cache[place]
-    except Exception as e:
-        print(f"Geocoding error for '{place}': {e}")
-    cache[place] = (None, None)
-    return cache[place]
+    return geocoder.get_coords(place)
 
 for _, row in df.iterrows():
     has_valid_gt = not pd.isna(row["LAT"]) and not pd.isna(row["LON"])
