@@ -10,6 +10,7 @@ from shapely.geometry import LineString, Point
 from collections import Counter
 from sklearn.cluster import KMeans
 from math import radians, cos, sin, asin, sqrt
+from geocoder import Geocoder
 
 # ------------------------
 # Parameters
@@ -19,59 +20,65 @@ ACCURACY_THRESHOLD_KM = 500  # Used for "correct" predictions
 # ------------------------
 # Load and Prepare Data
 # ------------------------
-df = pd.read_csv("geo_hipo_results.csv")
+PREDICTIONS_FILE = "city_country_predictions.json"
+GROUND_TRUTH_FILE = "im2gps3k.csv"
+
+if PREDICTIONS_FILE.endswith(".json"):
+    with open(PREDICTIONS_FILE, "r") as f:
+        preds = json.load(f)
+    pred_df = pd.DataFrame(preds)
+else:
+    pred_df = pd.read_csv(PREDICTIONS_FILE)
+    if "prediction" in pred_df.columns:
+        pred_df["prediction"] = pred_df["prediction"].apply(
+            lambda x: json.loads(x)[0] if isinstance(x, str) and x.strip().startswith("[") else x
+        )
+
+pred_df["guessed_place"] = pred_df["prediction"].apply(lambda x: x[0] if isinstance(x, list) else x)
+
+gt_df = pd.read_csv(GROUND_TRUTH_FILE, usecols=["IMG_ID", "LAT", "LON"])
+
+df = pred_df.merge(gt_df, left_on="filename", right_on="IMG_ID", how="left")
+
+geocoder = Geocoder()
 
 records = []
 
-for _, row in df.iterrows():
-    has_valid_coords = not pd.isna(row["predicted_lat"]) and not pd.isna(row["predicted_lon"])
-    has_valid_gt = not pd.isna(row["ground_truth_lat"]) and not pd.isna(row["ground_truth_lon"])
+def haversine(lon1, lat1, lon2, lat2):
+    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+    dlon, dlat = lon2 - lon1, lat2 - lat1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    return 6371 * 2 * asin(sqrt(a))
 
+def geocode_place(place):
+    return geocoder.get_coords(place)
+
+for _, row in df.iterrows():
+    has_valid_gt = not pd.isna(row["LAT"]) and not pd.isna(row["LON"])
     if not has_valid_gt:
-        continue  # Can't evaluate without ground truth
+        continue
+
+    lat_pred, lon_pred = geocode_place(row.get("guessed_place"))
+    has_valid_coords = lat_pred is not None and lon_pred is not None
 
     if has_valid_coords:
-        pred = [float(row["predicted_lat"]), float(row["predicted_lon"])]
-        gt = [float(row["ground_truth_lat"]), float(row["ground_truth_lon"])]
-
-        # Haversine distance
-        def haversine(lon1, lat1, lon2, lat2):
-            lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-            dlon, dlat = lon2 - lon1, lat2 - lat1
-            a = sin(dlat/2)**2 + cos(lat1)*cos(lat2)*sin(dlon/2)**2
-            return 6371 * 2 * asin(sqrt(a))  # km
-
-        error_km = haversine(pred[1], pred[0], gt[1], gt[0])
+        error_km = haversine(lon_pred, lat_pred, row["LON"], row["LAT"])
     else:
-        error_km = float('inf')  # Treat missing prediction as worst-case
+        error_km = float("inf")
 
-    guessed = row["guessed_place"] if not pd.isna(row["guessed_place"]) else "Unknown"
+    guessed = row.get("guessed_place", "Unknown") or "Unknown"
     is_missing_guess = guessed.strip().lower() in ["", "unknown", "none", "null"]
 
-    # Extract continent from raw_output
-    try:
-        raw_output = row["raw_output"]
-        start_idx = raw_output.find("{")
-        end_idx = raw_output.rfind("}")
-        if start_idx != -1 and end_idx != -1:
-            output_json = json.loads(raw_output[start_idx:end_idx+1])
-            continent = output_json.get("continent", None)
-        else:
-            continent = None
-    except Exception as e:
-        print(f"Error parsing raw_output: {e}")
-        continent = None
-
     records.append({
-        "image": row["image"],
+        "image": row["filename"],
         "guessed_place": guessed,
-        "continent": continent,
-        "lat_pred": row["predicted_lat"] if has_valid_coords else None,
-        "lon_pred": row["predicted_lon"] if has_valid_coords else None,
-        "lat_true": row["ground_truth_lat"],
-        "lon_true": row["ground_truth_lon"],
+        "continent": None,
+        "lat_pred": lat_pred,
+        "lon_pred": lon_pred,
+        "lat_true": row["LAT"],
+        "lon_true": row["LON"],
         "error_km": error_km,
-        "correct": (error_km <= ACCURACY_THRESHOLD_KM) and not is_missing_guess
+        "correct": (error_km <= ACCURACY_THRESHOLD_KM) and not is_missing_guess,
     })
 
 
