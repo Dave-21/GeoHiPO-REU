@@ -19,9 +19,14 @@ class Geocoder:
                 self.cache = {}
         else:
             self.cache = {}
-        # Increase timeout to avoid read timeouts
+        # Increase timeout and retries to reduce failures
         self.geolocator = Nominatim(user_agent=user_agent, timeout=10)
-        self.geocode = RateLimiter(self.geolocator.geocode, min_delay_seconds=1)
+        self.geocode = RateLimiter(
+            self.geolocator.geocode,
+            min_delay_seconds=1,
+            max_retries=2,
+            error_wait_seconds=2,
+        )
 
     def save_cache(self) -> None:
         try:

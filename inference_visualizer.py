@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -20,8 +21,17 @@ ACCURACY_THRESHOLD_KM = 500  # Used for "correct" predictions
 # ------------------------
 # Load and Prepare Data
 # ------------------------
-PREDICTIONS_FILE = "city_country_predictions.json"
-GROUND_TRUTH_FILE = "im2gps3k.csv"
+parser = argparse.ArgumentParser(description="Visualize geolocalization results")
+parser.add_argument("--predictions", default="city_country_predictions.json",
+                    help="Path to JSON or CSV file of predictions")
+parser.add_argument("--ground_truth", default="im2gps3k.csv",
+                    help="Path to the im2gps3k CSV ground truth file")
+parser.add_argument("--cache", default="geocode_cache.json",
+                    help="Path to geocoder cache file")
+args = parser.parse_args()
+
+PREDICTIONS_FILE = args.predictions
+GROUND_TRUTH_FILE = args.ground_truth
 
 if PREDICTIONS_FILE.endswith(".json"):
     with open(PREDICTIONS_FILE, "r") as f:
@@ -40,7 +50,7 @@ gt_df = pd.read_csv(GROUND_TRUTH_FILE, usecols=["IMG_ID", "LAT", "LON"])
 
 df = pred_df.merge(gt_df, left_on="filename", right_on="IMG_ID", how="left")
 
-geocoder = Geocoder()
+geocoder = Geocoder(cache_file=args.cache)
 
 records = []
 
@@ -228,3 +238,6 @@ plt.title(f"Accuracy of Top Guessed Cities (≤{ACCURACY_THRESHOLD_KM} km)")
 plt.tight_layout()
 plt.savefig("output/city_accuracy_barplot.png")
 plt.close()
+
+# Persist geocoder cache for future runs
+geocoder.save_cache()
